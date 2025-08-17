@@ -165,7 +165,6 @@ def extract_frames(input_path, output_path, fps, ratio, pipe):
                 frame,
                 os.path.join(output_path, "outliers", os.path.basename(frame))
             )
-    
 
 def main():
     parser = argparse.ArgumentParser()
@@ -211,10 +210,7 @@ def main():
     else: 
         print(f"Processing video {args.input}")
         extract_frames(args.input, args.output, args.fps, args.ratio, pipe)
-
-    
         
-    
     print("Done...")
     
 if __name__ == "__main__":
