@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="384" height="384" alt="dola" src="https://github.com/user-attachments/assets/3032769f-7b9c-4833-b47c-cb9f816ddf1b" />
+  <img width="384" height="384" alt="xtractor" src="https://github.com/user-attachments/assets/f2161d7f-ec1e-4a81-bf16-5409fde08eaa" />
 </p>
 
 <h2 align="center">XTRACTOR</h2>
