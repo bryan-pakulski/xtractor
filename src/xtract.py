@@ -1,0 +1,221 @@
+import torch
+import transformers
+from transformers import pipeline
+from transformers.image_utils import load_image
+from transformers.pipelines.pt_utils import KeyDataset
+from datasets import load_dataset, Image
+import tempfile
+import shutil
+import torchvision
+import cv2
+import os, sys, time
+
+import argparse
+from tqdm import tqdm
+import numpy as np
+
+SUPPORTED_VIDEO_FORMATS = [".mov", ".mp4", ".avi", ".mkv", ".webm"]
+
+def strip_video(filepath, outpath, fps=1):
+    """
+    Extract frames from video at specified fps
+    Args:
+        filepath: Path to video file
+        outpath: Output directory for frames
+        fps: Frames per second to extract (default 1)
+    """
+    if not os.path.exists(outpath):
+        os.makedirs(outpath)
+
+    if not os.path.exists(filepath):
+        print(f"File not found: {filepath}")
+        sys.exit(1)
+    
+    video = cv2.VideoCapture(filepath)
+    
+    video_fps = video.get(cv2.CAP_PROP_FPS)
+    frame_interval = int(video_fps / fps)
+    
+    count = 0
+    frame_count = 0
+    
+    while True:
+        success = video.grab()
+        if not success:
+            break
+            
+        if frame_count % frame_interval == 0:
+            success, frame = video.retrieve()
+            if success:
+                cv2.imwrite(os.path.join(outpath, f"frame_{count:06d}.jpg"), frame)
+                count += 1
+                
+        frame_count += 1
+    
+    print(f"Extracted {count} frames")
+    video.release()
+    return count
+
+def compute_embeddings(image_dir, pipe, batch_size=16):
+    """
+    Compute embeddings for all images in image_dir
+    Args:
+        image_dir: Directory containing images
+        pipe: Huggingface pipeline model
+        batch_size: Batch size for processing
+    """
+    embeddings_db = {}
+    
+    dataset = load_dataset("imagefolder", 
+                         data_dir=image_dir, 
+                         split="train").cast_column("image", Image(decode=False))
+
+    
+    start_time = time.time()
+    for i in range(0, len(dataset), batch_size):
+        batch = dataset[i:i + batch_size]
+        filenames = [ob["path"] for ob in batch["image"]]
+        outputs = pipe(filenames)
+        
+        for filename, embedding in zip(filenames, outputs):
+            embedding_tensor = torch.tensor(embedding)
+            embedding_tensor = embedding_tensor / embedding_tensor.norm()
+            embeddings_db[filename] = embedding_tensor[0].ravel()
+    end_time = time.time()
+    
+    print(f"Computed {len(embeddings_db)} embeddings in {end_time - start_time} seconds")
+    return embeddings_db
+
+def filter_images(embeddings_db, ratio=5):
+    """
+    Filter images based on similarity
+    Args:
+        embeddings_db: Dictionary of image names to embeddings
+        ratio: Percentage of frames to keep
+    Returns:
+        tuple: (selected_files, shift_frames) where selected_files are the regular filtered frames
+        and shift_frames are frames with significant camera movement
+    """
+    
+    embeddings = torch.stack(list(embeddings_db.values()))
+    filenames = list(embeddings_db.keys())    
+    similarities = torch.mm(embeddings, embeddings.t())
+    avg_similarities = similarities.mean(dim=1)
+    
+    # Find regular distinct frames
+    num_keep = int(len(filenames) * (ratio / 100))
+    _, indices = torch.topk(avg_similarities, num_keep, largest=False)
+    
+    # Detect camera shifts by finding frames with very low similarity to their neighbors
+    window_size = 5
+    rolling_similarities = []
+    
+    for i in range(len(filenames)):
+        start_idx = max(0, i - window_size)
+        end_idx = min(len(filenames), i + window_size + 1)
+        neighbor_similarities = similarities[i, start_idx:end_idx].mean()
+        rolling_similarities.append(neighbor_similarities)
+    
+    rolling_similarities = torch.tensor(rolling_similarities)
+    
+    # Find frames with significantly lower similarity to their neighbors
+    mean_sim = rolling_similarities.mean()
+    std_sim = rolling_similarities.std()
+    threshold = mean_sim - std_sim # NOTE: tweak here to control sensitivity, 1.std seems "mostly" reasonable
+    
+    shift_indices = torch.where(rolling_similarities < threshold)[0]
+    shift_frames = [filenames[i] for i in shift_indices]
+    selected_files = [filenames[i] for i in indices if i not in shift_indices]
+    
+    print(f"Selected {len(selected_files)}/{len(selected_files) + len(shift_frames)} frames")
+    print(f"{len(shift_frames)} camera shifts / extreme outliers") 
+    
+    return selected_files, shift_frames
+
+def extract_frames(input_path, output_path, fps, ratio, pipe):
+    """
+    Extract frames from input_path and save to output_path
+    Args:
+        input_path: Path to input video file or directory of videos
+        output_path: Path to output directory
+        fps: Frames per second to extract (default 1)
+        ratio: Percentage of frames to keep
+        pipe: Huggingface pipeline model
+    """
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        print(f"Extracting frames at {fps} FPS... to {temp_dir}")
+        frame_count = strip_video(input_path, temp_dir, fps=fps)
+        
+        print("Computing embeddings...")
+        embeddings_db = compute_embeddings(temp_dir, pipe)
+        
+        print("Filtering distinct frames...")
+        good_frames, shift_frames = filter_images(embeddings_db, ratio)
+
+        os.makedirs(output_path, exist_ok=True)
+        os.makedirs(os.path.join(output_path, "outliers"), exist_ok=True)
+        for frame in good_frames:
+            shutil.copy2(
+                frame,
+                os.path.join(output_path, os.path.basename(frame))
+            )
+        for frame in shift_frames:
+            shutil.copy2(
+                frame,
+                os.path.join(output_path, "outliers", os.path.basename(frame))
+            )
+    
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True, help="Input path, either video file or directory of videos")
+    parser.add_argument("--output", required=True, help="Output directory")
+    parser.add_argument("--ratio", type=float, default=5, help="Percentage of frames to keep")
+    parser.add_argument("--fps", type=float, default=1, help="Initial sampling rate in frames per second")
+    parser.add_argument("--device", type=str, default="auto", help="Device to use for inference")
+    parser.add_argument("--token", type=str, default=None, help="Huggingface token")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for inference")
+    args = parser.parse_args()
+
+    if args.token is None:
+        print("No token provided, attempting to load from environment variable HF_TOKEN")
+        token = os.environ["HF_TOKEN"]
+    else:
+        token = args.token
+
+    from huggingface_hub import login
+    login(token = token)
+
+    print("Loading model...")    
+    pretrained_model_name = "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"    
+    pipe = pipeline(
+        model=pretrained_model_name,
+        task="image-feature-extraction", 
+        batch_size=args.batch_size
+    )
+
+    if os.path.isdir(args.input):
+        print(f"Processing directory {args.input}")
+        for f in os.listdir(args.input):
+            ext = os.path.splitext(f)[1]
+            if ext in SUPPORTED_VIDEO_FORMATS:
+                base_name = os.path.splitext(f)[0]
+                extract_frames(os.path.join(args.input, f), 
+                               os.path.join(args.output, base_name), 
+                               args.fps, 
+                               args.ratio,
+                               pipe)
+            else:
+                print(f"Skipping {f}, unsupported file type")
+    else: 
+        print(f"Processing video {args.input}")
+        extract_frames(args.input, args.output, args.fps, args.ratio, pipe)
+
+    
+        
+    
+    print("Done...")
+    
+if __name__ == "__main__":
+    main()
