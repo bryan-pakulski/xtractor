@@ -1,18 +1,14 @@
 import torch
-import transformers
 from transformers import pipeline
-from transformers.image_utils import load_image
-from transformers.pipelines.pt_utils import KeyDataset
 from datasets import load_dataset, Image
 import tempfile
 import shutil
-import torchvision
 import cv2
-import os, sys, time
+import os
+import sys
+import time
 
 import argparse
-from tqdm import tqdm
-import numpy as np
 
 SUPPORTED_VIDEO_FORMATS = [".mov", ".mp4", ".avi", ".mkv", ".webm"]
 
@@ -146,7 +142,8 @@ def extract_frames(input_path, output_path, fps, ratio, pipe):
     with tempfile.TemporaryDirectory() as temp_dir:
         print(f"Extracting frames at {fps} FPS... to {temp_dir}")
         frame_count = strip_video(input_path, temp_dir, fps=fps)
-        
+        print(f"Extracted {frame_count} frames")
+
         print("Computing embeddings...")
         embeddings_db = compute_embeddings(temp_dir, pipe)
         

@@ -17,6 +17,10 @@ Can be passed as an argument or set in the environment variable `HF_TOKEN`.
 
 # Setup
 ```
+# If using pyenv for environment management
+# This has only been tested on this python version
+pyenv install 3.10.18
+
 pip install -r requirements.txt
 ```
 
