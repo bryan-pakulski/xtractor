@@ -82,7 +82,7 @@ def compute_embeddings(image_dir, pipe, batch_size=16):
     print(f"Computed {len(embeddings_db)} embeddings in {end_time - start_time} seconds")
     return embeddings_db
 
-def filter_images(embeddings_db, ratio=5):
+def filter_images(embeddings_db, ratio=0.5):
     """
     Filter images based on similarity
     Args:
@@ -99,10 +99,10 @@ def filter_images(embeddings_db, ratio=5):
     avg_similarities = similarities.mean(dim=1)
     
     # Find regular distinct frames
-    num_keep = int(len(filenames) * (ratio / 100))
+    num_keep = int(len(filenames) * ratio)
     _, indices = torch.topk(avg_similarities, num_keep, largest=False)
     
-    # Detect camera shifts by finding frames with very low similarity to their neighbors
+    # Detect camera shifts and other anomalies by finding frames with very low similarity to their neighbors
     window_size = 5
     rolling_similarities = []
     
@@ -167,7 +167,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="Input path, either video file or directory of videos")
     parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--ratio", type=float, default=5, help="Percentage of frames to keep")
+    parser.add_argument("--ratio", type=float, default=0.5, help="Percentage of frames to keep")
     parser.add_argument("--fps", type=float, default=1, help="Initial sampling rate in frames per second")
     parser.add_argument("--device", type=str, default="auto", help="Device to use for inference")
     parser.add_argument("--token", type=str, default=None, help="Huggingface token")
