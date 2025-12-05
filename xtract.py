@@ -52,6 +52,39 @@ def strip_video(filepath, outpath, fps=1):
     video.release()
     return count
 
+def filter_duplicates(embeddings_db, threshold=0.98):
+    """
+    Remove duplicate frames based on cosine similarity
+    """
+    if not embeddings_db:
+        return {}
+
+    filenames = sorted(list(embeddings_db.keys()))
+    unique_db = {}
+
+    # First frame is always kept
+    prev_filename = filenames[0]
+    unique_db[prev_filename] = embeddings_db[prev_filename]
+
+    duplicates_count = 0
+
+    for i in range(1, len(filenames)):
+        curr_filename = filenames[i]
+
+        #embeddings
+        emb_1 = embeddings_db[prev_filename]
+        emb_2 = embeddings_db[curr_filename]
+        cos_sim = torch.nn.functional.cosine_similarity(emb_1, emb_2, dim=0).item()
+
+        if cos_sim < threshold:
+            unique_db[curr_filename] = embeddings_db[curr_filename]
+            prev_filename = curr_filename
+        else:
+            duplicates_count += 1
+
+    print(f"Removed {duplicates_count} duplicate frames with at least {threshold} cosine similarity")
+    return unique_db
+
 def compute_embeddings(image_dir, pipe, batch_size=16):
     """
     Compute embeddings for all images in image_dir
@@ -128,7 +161,7 @@ def filter_images(embeddings_db, ratio=0.5):
     
     return selected_files, shift_frames
 
-def extract_frames(input_path, output_path, fps, ratio, pipe):
+def extract_frames(input_path, output_path, fps, ratio, pipe, remove_duplicates, threshold):
     """
     Extract frames from input_path and save to output_path
     Args:
@@ -146,6 +179,10 @@ def extract_frames(input_path, output_path, fps, ratio, pipe):
 
         print("Computing embeddings...")
         embeddings_db = compute_embeddings(temp_dir, pipe)
+
+        if remove_duplicates:
+            print("Filtering duplicate frames...")
+            embeddings_db = filter_duplicates(embeddings_db, threshold)
         
         print("Filtering distinct frames...")
         good_frames, shift_frames = filter_images(embeddings_db, ratio)
@@ -172,6 +209,9 @@ def main():
     parser.add_argument("--device", type=str, default="auto", help="Device to use for inference")
     parser.add_argument("--token", type=str, default=None, help="Huggingface token")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for inference")
+    parser.add_argument("--remove_duplicates", action="store_true", default=True, help="Remove duplicate frames based on cosine similarity")
+    parser.add_argument("--threshold", type=float, default=0.98, help="Threshold for cosine similarity")
+
     args = parser.parse_args()
 
     if args.token is None:
@@ -201,12 +241,21 @@ def main():
                                os.path.join(args.output, base_name), 
                                args.fps, 
                                args.ratio,
-                               pipe)
+                               pipe,
+                               args.remove_duplicates,
+                               args.threshold)
             else:
                 print(f"Skipping {f}, unsupported file type")
     else: 
         print(f"Processing video {args.input}")
-        extract_frames(args.input, args.output, args.fps, args.ratio, pipe)
+        extract_frames(args.input,
+                       args.output,
+                       args.fps,
+                       args.ratio,
+                       pipe,
+                       args.remove_duplicates,
+                       args.threshold
+                       )
         
     print("Done...")
     

@@ -8,7 +8,10 @@ Unique video frame extractor using dinov3 - Building datasets for Computer Visio
 
 Uses embeddings & feature extraction to pull only the most relevant frames from a directory of videos / single video.
 
-Also detects camera movement or significant outliers by looking for frames with an extremely low similarity within a sliding window to their direct neighbors. 
+Features:
+- Extract frames from video at a specified initial sampling rate, from there you can filter out X% significant frames to keep
+- Automatically remove duplicate frames based on cosine similarity
+- Outliers are filtered and saved in a seperate location, based on similarity to neighboring frames
 
 # Requirements
 Hugging Face API token is required.
@@ -26,15 +29,19 @@ pip install -r requirements.txt
 
 # Usage
 ```
-usage: xtract.py [-h] --input INPUT --output OUTPUT [--ratio RATIO] [--fps FPS] [--device DEVICE] [--token TOKEN] [--batch_size BATCH_SIZE]
-
 options:
-  -h, --help            show this help message and exit
-  --input INPUT         Input path, either video file or directory of videos
-  --output OUTPUT       Output directory
-  --ratio RATIO         Percentage of frames to keep
-  --fps FPS             Initial sampling rate in frames per second
-  --device DEVICE       Device to use for inference
-  --token TOKEN         Huggingface token
-  --batch_size BATCH_SIZE
+  -h, --help               show this help message and exit
+  --input INPUT            Input path, either video file or directory of videos
+  --output OUTPUT          Output directory
+  --ratio RATIO            Percentage of frames to keep
+  --fps FPS                Initial sampling rate in frames per second
+  --device DEVICE          Device to use for inference
+  --token TOKEN            Huggingface token
+  --batch_size BATCH_SIZE  Batch size for inference
+  --remove_duplicates      Remove duplicate frames based on cosine similarity
+  --threshold THRESHOLD    Threshold for cosine similarity
 ```
+
+# Tools
+An additional tool is included to help with selecting a distibution of frames from a dataset, it uses dinov2 to get embeddings and
+select a count of further neighbours to keep trying to make sure an even distrubution is kept.
